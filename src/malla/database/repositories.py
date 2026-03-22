@@ -673,6 +673,7 @@ class PacketRepository:
                 FROM packet_history
                 WHERE gateway_id IS NOT NULL
                 ORDER BY gateway_id
+                LIMIT 1000
             """)
 
             gateways = [row["gateway_id"] for row in cursor.fetchall()]
@@ -1105,6 +1106,7 @@ class NodeRepository:
     @staticmethod
     def get_node_details(node_id: int) -> dict[str, Any] | None:
         """Get comprehensive details about a specific node."""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -1166,7 +1168,6 @@ class NodeRepository:
                 cursor.execute("SELECT * FROM node_info WHERE node_id = ?", (node_id,))
                 node_info_row = cursor.fetchone()
                 if not node_info_row:
-                    conn.close()
                     return None
 
                 # Node exists but has no packets
@@ -1191,7 +1192,6 @@ class NodeRepository:
                     "avg_snr": None,
                     "avg_hops": None,
                 }
-                conn.close()
                 return {
                     "node": node_info,
                     "recent_packets": [],
@@ -1734,6 +1734,7 @@ class NodeRepository:
                 )
 
             conn.close()
+            conn = None
 
             # Get location information using the new, efficient LocationRepository helper
             location_info = None
@@ -1873,6 +1874,9 @@ class NodeRepository:
         except Exception as e:
             logger.error(f"Error getting node details for {node_id}: {e}")
             raise
+        finally:
+            if conn is not None:
+                conn.close()
 
     @staticmethod
     def get_relay_node_candidates(
@@ -3565,6 +3569,79 @@ class LocationRepository:
 
         except Exception as e:
             logger.error(f"Error getting node location history: {e}")
+            raise
+
+    @staticmethod
+    def get_bulk_location_history(
+        node_ids: list[int], limit: int = 50
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Get location history for multiple nodes in a single SQL query."""
+        if not node_ids:
+            return {}
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            placeholders = ",".join("?" for _ in node_ids)
+            query = f"""
+                SELECT from_node_id, timestamp, raw_payload,
+                    datetime(timestamp, 'unixepoch') as timestamp_str
+                FROM (
+                    SELECT from_node_id, timestamp, raw_payload,
+                        ROW_NUMBER() OVER (PARTITION BY from_node_id ORDER BY timestamp DESC) AS rn
+                    FROM packet_history
+                    WHERE from_node_id IN ({placeholders})
+                    AND portnum = 3
+                    AND raw_payload IS NOT NULL
+                ) ranked
+                WHERE rn <= ?
+                ORDER BY from_node_id, timestamp DESC
+            """
+
+            cursor.execute(query, node_ids + [limit])
+            result: dict[int, list[dict[str, Any]]] = {}
+
+            for row in cursor.fetchall():
+                try:
+                    if not row["raw_payload"]:
+                        continue
+
+                    position = mesh_pb2.Position()
+                    position.ParseFromString(row["raw_payload"])
+
+                    latitude = (
+                        position.latitude_i / 1e7 if position.latitude_i else None
+                    )
+                    longitude = (
+                        position.longitude_i / 1e7 if position.longitude_i else None
+                    )
+                    altitude = position.altitude if position.altitude else None
+
+                    if not latitude or not longitude:
+                        continue
+
+                    nid = row["from_node_id"]
+                    result.setdefault(nid, []).append(
+                        {
+                            "latitude": latitude,
+                            "longitude": longitude,
+                            "altitude": altitude,
+                            "timestamp": row["timestamp"],
+                            "timestamp_str": row["timestamp_str"],
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to parse bulk location for node {row['from_node_id']} "
+                        f"at timestamp {row['timestamp']}: {e}"
+                    )
+                    continue
+
+            conn.close()
+            return result
+
+        except Exception as e:
+            logger.error(f"Error getting bulk location history: {e}")
             raise
 
     @staticmethod

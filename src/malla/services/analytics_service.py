@@ -340,9 +340,11 @@ class AnalyticsService:
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute(query, params)
-
-        rows = cursor.fetchall()
+        try:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
         hourly_counts: dict[int, int] = defaultdict(int)
         hourly_success: dict[int, int] = defaultdict(int)

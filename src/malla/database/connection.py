@@ -160,3 +160,24 @@ def _ensure_schema_migrations(cursor: sqlite3.Cursor) -> None:
             _SCHEMA_MIGRATIONS_DONE.add("primary_channel")
         else:
             raise
+
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_packet_gateway_mesh ON packet_history(mesh_packet_id, gateway_id, timestamp)"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create idx_packet_gateway_mesh: {e}")
+
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_packet_position_lookup ON packet_history(from_node_id, timestamp) WHERE portnum = 3 AND raw_payload IS NOT NULL"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create idx_packet_position_lookup: {e}")
+
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_packet_portnum_name ON packet_history(portnum_name)"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create idx_packet_portnum_name: {e}")

@@ -10,6 +10,7 @@ This service provides comprehensive traceroute analysis functionality including:
 
 import logging
 import math
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any, cast
@@ -26,6 +27,10 @@ from ..utils.node_utils import get_bulk_node_names
 from ..utils.traceroute_utils import parse_traceroute_payload
 
 logger = logging.getLogger(__name__)
+
+_longest_links_cache: dict[tuple, tuple[dict, float]] = {}
+_longest_links_cache_lock = threading.Lock()
+_LONGEST_LINKS_TTL = 300  # 5 minutes
 
 
 class TracerouteService:
@@ -421,6 +426,14 @@ class TracerouteService:
         Returns:
             Dictionary with longest links analysis
         """
+        cache_key = (min_distance_km, min_snr, max_results)
+        with _longest_links_cache_lock:
+            if cache_key in _longest_links_cache:
+                cached_result, cached_at = _longest_links_cache[cache_key]
+                if time.time() - cached_at < _LONGEST_LINKS_TTL:
+                    logger.info("Returning cached longest links result (age: %.0fs)", time.time() - cached_at)
+                    return cached_result
+
         start_time = time.time()
         logger.info(
             f"Getting longest links analysis: min_distance={min_distance_km}km, "
@@ -485,20 +498,13 @@ class TracerouteService:
 
             # Build a dict: node_id -> list[location_dict] (DESC by timestamp)
             location_history_cache: dict[int, list[dict[str, Any]]] = {}
-            for node_id in unique_node_ids:
+            if unique_node_ids:
                 try:
-                    locations = LocationRepository.get_node_location_history(
-                        node_id, limit=50
+                    location_history_cache = LocationRepository.get_bulk_location_history(
+                        list(unique_node_ids), limit=50
                     )
-                    if locations:
-                        location_history_cache[node_id] = (
-                            locations  # already DESC order
-                        )
                 except Exception as e:
-                    logger.warning(
-                        f"Error fetching location history for node {node_id}: {e}"
-                    )
-                    continue
+                    logger.warning(f"Error bulk-fetching location history: {e}")
 
             prefetch_duration = time.time() - prefetch_start
             logger.info(
@@ -527,8 +533,7 @@ class TracerouteService:
                 history = location_history_cache.get(node_id)
                 if not history:
                     loc = _orig_get_location(node_id, target_ts)
-                    if loc:
-                        location_cache[memo_key] = loc
+                    location_cache[memo_key] = loc  # cache None too — prevents repeated DB hits
                     return loc
 
                 # histories are DESC (newest first). Find first <= ts.
@@ -608,6 +613,7 @@ class TracerouteService:
                         tr_packet = TraceroutePacket(
                             packet_data=packet,
                             resolve_names=True,
+                            pre_parsed_route_data=parsed_route_cache.get(packet["id"]),
                         )
 
                         # Track cache performance before distance calculation
@@ -941,6 +947,9 @@ class TracerouteService:
                     f"Process: {process_duration:.3f}s ({process_duration / total_duration * 100:.1f}%), "
                     f"Build: {build_duration:.3f}s ({build_duration / total_duration * 100:.1f}%)"
                 )
+
+                with _longest_links_cache_lock:
+                    _longest_links_cache[cache_key] = (result_dict, time.time())
 
                 return result_dict
 
