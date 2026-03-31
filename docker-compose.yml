@@ -3,9 +3,9 @@ version: '3.8'
 services:
   malla-web:
     # Use pre-built image by default, override with 'build: .' for development
-    image: ${MALLA_IMAGE:-ghcr.io/zenitram/malla:latest}
+    #image: ${MALLA_IMAGE:-ghcr.io/zenitram/malla:latest}
     # Uncomment the following line for local development:
-    # build: .
+    build: .
 
     # Choose between Flask dev server and Gunicorn
     # Default: Flask development server (malla-web)
@@ -31,9 +31,9 @@ services:
 
   malla-capture:
     # Use pre-built image by default, override with 'build: .' for development
-    image: ${MALLA_IMAGE:-ghcr.io/zenitram/malla:latest}
+    # image: ${MALLA_IMAGE:-ghcr.io/zenitram/malla:latest}
     # Uncomment the following line for local development:
-    # build: .
+    build: .
     command: ["/app/.venv/bin/malla-capture"]
     environment:
       - MALLA_DATABASE_FILE=/app/data/meshtastic_history.db
