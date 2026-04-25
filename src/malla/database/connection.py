@@ -12,6 +12,9 @@ from malla.config import get_config
 logger = logging.getLogger(__name__)
 
 
+_PRAGMA_DONE: set[str] = set()  # tracks which db paths have had one-time PRAGMAs applied
+
+
 def get_db_connection() -> sqlite3.Connection:
     """
     Get a connection to the SQLite database with proper concurrency configuration.
@@ -19,11 +22,6 @@ def get_db_connection() -> sqlite3.Connection:
     Returns:
         sqlite3.Connection: Database connection with row factory set and WAL mode enabled
     """
-    # Resolve DB path:
-    # 1. Explicit override via `MALLA_DATABASE_FILE` env-var (handy for scripts)
-    # 2. Value from YAML configuration
-    # 3. Fallback to hard-coded default
-
     db_path: str = (
         os.getenv("MALLA_DATABASE_FILE")
         or get_config().database_file
@@ -31,37 +29,27 @@ def get_db_connection() -> sqlite3.Connection:
     )
 
     try:
-        conn = sqlite3.connect(
-            db_path, timeout=30.0
-        )  # 30 second timeout for busy database
-        conn.row_factory = sqlite3.Row  # Enable column access by name
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row
 
-        # Configure SQLite for better concurrency
         cursor = conn.cursor()
 
-        # Enable WAL mode for better concurrent read/write performance
-        cursor.execute("PRAGMA journal_mode=WAL")
-
-        # Set synchronous to NORMAL for better performance while maintaining safety
+        # Per-connection PRAGMAs (must run every time)
         cursor.execute("PRAGMA synchronous=NORMAL")
-
-        # Set busy timeout to handle concurrent access
-        cursor.execute("PRAGMA busy_timeout=30000")  # 30 seconds
-
-        # Enable foreign key constraints
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.execute("PRAGMA foreign_keys=ON")
-
-        # Optimize for read performance
-        cursor.execute("PRAGMA cache_size=10000")  # 10MB cache
+        cursor.execute("PRAGMA cache_size=-51200")   # 50 MB page cache
         cursor.execute("PRAGMA temp_store=MEMORY")
+        cursor.execute("PRAGMA mmap_size=268435456") # 256 MB memory-mapped I/O
 
-        # ------------------------------------------------------------------
-        # Lightweight schema migrations – run once per connection.
-        # ------------------------------------------------------------------
-        try:
-            _ensure_schema_migrations(cursor)
-        except Exception as e:
-            logger.warning(f"Schema migration check failed: {e}")
+        # One-time PRAGMAs + schema work — only on first connection per db_path per process
+        if db_path not in _PRAGMA_DONE:
+            cursor.execute("PRAGMA journal_mode=WAL")  # persistent once set, but harmless
+            try:
+                _ensure_schema_migrations(cursor)
+            except Exception as e:
+                logger.warning(f"Schema migration check failed: {e}")
+            _PRAGMA_DONE.add(db_path)
 
         return conn
     except Exception as e:
@@ -181,3 +169,19 @@ def _ensure_schema_migrations(cursor: sqlite3.Cursor) -> None:
         )
     except Exception as e:
         logger.warning(f"Failed to create idx_packet_portnum_name: {e}")
+
+    # Covering index for dashboard all-time count + recent stats (avoids full row reads)
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_packet_ts_node_rssi ON packet_history(timestamp, from_node_id, rssi, snr, processed_successfully)"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create idx_packet_ts_node_rssi: {e}")
+
+    # Covering index for gateway distribution query
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_packet_ts_gateway_success ON packet_history(timestamp, gateway_id, processed_successfully)"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create idx_packet_ts_gateway_success: {e}")

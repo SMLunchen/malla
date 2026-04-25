@@ -22,61 +22,66 @@ logger = logging.getLogger(__name__)
 class DashboardRepository:
     """Repository for dashboard statistics."""
 
+    _STATS_CACHE: dict[str | None, tuple[float, dict[str, Any]]] = {}
+    _STATS_CACHE_TTL: int = 60  # dashboard stats: 60s is fresh enough
+
     @staticmethod
     def get_stats(gateway_id: str | None = None) -> dict[str, Any]:
         """Get overview statistics for the dashboard using optimized single query."""
+        now_ts = time.time()
+        cached = DashboardRepository._STATS_CACHE.get(gateway_id)
+        if cached and (now_ts - cached[0] < DashboardRepository._STATS_CACHE_TTL):
+            return cached[1]
+
         logger.info(f"Getting dashboard stats with gateway_id={gateway_id}")
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            # Calculate time thresholds
-            twenty_four_hours_ago = time.time() - (24 * 3600)
-            one_hour_ago = time.time() - 3600
+            twenty_four_hours_ago = now_ts - 86400
+            one_hour_ago = now_ts - 3600
 
-            # Build WHERE clause for gateway filtering
             gateway_filter = ""
-            gateway_params = []
+            gateway_params: list[Any] = []
             if gateway_id:
                 gateway_filter = " AND gateway_id = ?"
                 gateway_params = [gateway_id]
 
-            # Get basic node count (this is fast and separate)
             cursor.execute("SELECT COUNT(*) as total_nodes FROM node_info")
             total_nodes = cursor.fetchone()["total_nodes"]
 
-            # Single optimized query for all packet statistics
-            params = [one_hour_ago, twenty_four_hours_ago] + gateway_params
-
+            # Combined: all-time count + 24h stats in a single scan
             cursor.execute(
                 f"""
                 SELECT
-                    COUNT(*) as total_packets,
-                    COUNT(DISTINCT CASE WHEN from_node_id IS NOT NULL THEN from_node_id END) as active_nodes_24h,
+                    COUNT(*) as total_packets_alltime,
+                    COUNT(CASE WHEN timestamp > ? THEN 1 END) as total_packets_24h,
+                    COUNT(DISTINCT CASE WHEN timestamp > ? AND from_node_id IS NOT NULL THEN from_node_id END) as active_nodes_24h,
                     COUNT(CASE WHEN timestamp > ? THEN 1 END) as recent_packets,
-                    AVG(CASE WHEN rssi IS NOT NULL AND rssi != 0 THEN rssi END) as avg_rssi,
-                    AVG(CASE WHEN snr IS NOT NULL THEN snr END) as avg_snr,
-                    SUM(CASE WHEN processed_successfully = 1 THEN 1 ELSE 0 END) as successful_packets,
-                    CASE WHEN COUNT(*) > 0
-                         THEN ROUND(SUM(CASE WHEN processed_successfully = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1)
+                    AVG(CASE WHEN timestamp > ? AND rssi IS NOT NULL AND rssi != 0 THEN rssi END) as avg_rssi,
+                    AVG(CASE WHEN timestamp > ? AND snr IS NOT NULL THEN snr END) as avg_snr,
+                    CASE WHEN COUNT(CASE WHEN timestamp > ? THEN 1 END) > 0
+                         THEN ROUND(
+                             SUM(CASE WHEN timestamp > ? AND processed_successfully = 1 THEN 1 ELSE 0 END) * 100.0
+                             / COUNT(CASE WHEN timestamp > ? THEN 1 END), 1)
                          ELSE 0 END as success_rate
                 FROM packet_history
-                WHERE timestamp > ?{gateway_filter}
-            """,
-                params,
+                WHERE 1=1{gateway_filter}
+                """,
+                [
+                    twenty_four_hours_ago,  # total_packets_24h
+                    twenty_four_hours_ago,  # active_nodes_24h
+                    one_hour_ago,           # recent_packets
+                    twenty_four_hours_ago,  # avg_rssi
+                    twenty_four_hours_ago,  # avg_snr
+                    twenty_four_hours_ago,  # success_rate denominator
+                    twenty_four_hours_ago,  # success_rate numerator
+                    twenty_four_hours_ago,  # success_rate denominator
+                ] + gateway_params,
             )
-
             stats_row = cursor.fetchone()
 
-            # Get total packet count (all time) separately
-            cursor.execute(
-                f"SELECT COUNT(*) as total FROM packet_history WHERE 1=1{gateway_filter}",
-                gateway_params,
-            )
-            total_packets_all_time = cursor.fetchone()["total"]
-
-            # Get packet types separately (more efficient than JSON aggregation in SQLite)
             cursor.execute(
                 f"""
                 SELECT portnum_name, COUNT(*) as count
@@ -84,24 +89,24 @@ class DashboardRepository:
                 WHERE portnum_name IS NOT NULL AND timestamp > ?{gateway_filter}
                 GROUP BY portnum_name
                 ORDER BY count DESC
-            """,
+                """,
                 [twenty_four_hours_ago] + gateway_params,
             )
-
             packet_types = [dict(row) for row in cursor.fetchall()]
-
             conn.close()
 
-            return {
+            result = {
                 "total_nodes": total_nodes,
                 "active_nodes_24h": stats_row["active_nodes_24h"] or 0,
-                "total_packets": total_packets_all_time or 0,
+                "total_packets": stats_row["total_packets_alltime"] or 0,
                 "recent_packets": stats_row["recent_packets"] or 0,
                 "avg_rssi": round(stats_row["avg_rssi"] or 0, 1),
                 "avg_snr": round(stats_row["avg_snr"] or 0, 1),
                 "packet_types": packet_types,
                 "success_rate": stats_row["success_rate"] or 0,
             }
+            DashboardRepository._STATS_CACHE[gateway_id] = (now_ts, result)
+            return result
 
         except Exception as e:
             logger.error(f"Error getting dashboard stats: {e}")
