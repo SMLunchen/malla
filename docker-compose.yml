@@ -45,6 +45,7 @@ services:
       - MALLA_MQTT_TOPIC_PREFIX=${MALLA_MQTT_TOPIC_PREFIX:-msh}
       - MALLA_MQTT_TOPIC_SUFFIX=${MALLA_MQTT_TOPIC_SUFFIX:-/+/+/+/#}
       - MALLA_DEFAULT_CHANNEL_KEY=${MALLA_DEFAULT_CHANNEL_KEY:-}
+      - MALLA_DATA_RETENTION_HOURS=${MALLA_DATA_RETENTION_HOURS:-48}
     volumes:
       - malla_data:/app/data
       # Optional: mount your own config file (uncomment if you have one)
