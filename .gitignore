@@ -207,3 +207,4 @@ Thumbs.db
 # Local configuration (do not commit real config)
 config.yaml
 config_*.yaml
+.claude/settings.local.json
