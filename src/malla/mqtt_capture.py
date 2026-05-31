@@ -1180,6 +1180,15 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                 if hasattr(user, "macaddr") and user.macaddr
                 else None
             )
+            # Only trust primary_channel from broadcast NODEINFOs (to=0xFFFFFFFF).
+            # Direct responses (unicast) may arrive on a secondary channel and
+            # would otherwise produce false positives in misconfigured-node detection.
+            is_broadcast = to_node_id_numeric == 0xFFFFFFFF
+            primary_channel = (
+                service_envelope.channel_id
+                if service_envelope and is_broadcast
+                else None
+            )
             update_node_cache(
                 node_id=from_node_id_numeric,
                 hex_id=node_id_from_payload,
@@ -1189,9 +1198,7 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                 role=role_str,
                 is_licensed=user.is_licensed,
                 mac_address=mac_address,
-                primary_channel=service_envelope.channel_id
-                if service_envelope
-                else None,
+                primary_channel=primary_channel,
             )
 
             from_node_display = get_node_display_name(from_node_id_numeric)
