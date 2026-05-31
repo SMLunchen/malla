@@ -84,6 +84,46 @@
         </div>
     </div>
 
+    <!-- Misconfigured Nodes Warning -->
+    {% if stats.misconfigured_nodes > 0 %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-warning">
+                <div class="card-header bg-warning bg-opacity-10 d-flex align-items-center justify-content-between">
+                    <h5 class="card-title mb-0 text-warning">
+                        <i class="bi bi-exclamation-triangle-fill"></i>
+                        Falsch konfigurierte Nodes
+                        <span class="badge bg-warning text-dark ms-2">{{ stats.misconfigured_nodes }}</span>
+                    </h5>
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle"></i>
+                        Basierend auf zuletzt empfangener NODEINFO
+                    </small>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">
+                        Diese Nodes haben keinen Standard-Modem-Preset-Kanal als Primärkanal konfiguriert
+                        (LongFast, ShortSlow, etc.), sondern einen eigenen Kanalnamen.
+                        Das verhindert ggf. die korrekte Kommunikation im Mesh-Netzwerk.
+                    </p>
+                    <div class="row g-2">
+                        {% for entry in stats.misconfigured_by_channel %}
+                        <div class="col-auto">
+                            <a href="/nodes?primary_channel={{ entry.channel | replace(' ', '+') }}"
+                               class="btn btn-outline-warning btn-sm">
+                                <i class="bi bi-broadcast"></i>
+                                {{ entry.channel }}
+                                <span class="badge bg-warning text-dark ms-1">{{ entry.count }}</span>
+                            </a>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Network Health and Activity Row -->
     <div class="row mb-4">
         <!-- Network Activity Chart -->

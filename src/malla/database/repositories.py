@@ -93,6 +93,30 @@ class DashboardRepository:
                 [twenty_four_hours_ago] + gateway_params,
             )
             packet_types = [dict(row) for row in cursor.fetchall()]
+
+            standard_channels = (
+                "LongFast", "LongSlow", "MedSlow", "MedFast",
+                "ShortSlow", "ShortFast", "LongModerate", "ShortTurbo",
+            )
+            placeholders = ",".join("?" * len(standard_channels))
+            cursor.execute(
+                f"""
+                SELECT primary_channel, COUNT(*) as cnt
+                FROM node_info
+                WHERE primary_channel IS NOT NULL
+                  AND primary_channel != ''
+                  AND primary_channel NOT IN ({placeholders})
+                GROUP BY primary_channel
+                ORDER BY cnt DESC
+                """,
+                list(standard_channels),
+            )
+            misconfigured_by_channel = [
+                {"channel": row["primary_channel"], "count": row["cnt"]}
+                for row in cursor.fetchall()
+            ]
+            misconfigured_nodes = sum(r["count"] for r in misconfigured_by_channel)
+
             conn.close()
 
             result = {
@@ -104,6 +128,8 @@ class DashboardRepository:
                 "avg_snr": round(stats_row["avg_snr"] or 0, 1),
                 "packet_types": packet_types,
                 "success_rate": stats_row["success_rate"] or 0,
+                "misconfigured_nodes": misconfigured_nodes,
+                "misconfigured_by_channel": misconfigured_by_channel,
             }
             DashboardRepository._STATS_CACHE[gateway_id] = (now_ts, result)
             return result
