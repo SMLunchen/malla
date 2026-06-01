@@ -97,7 +97,7 @@
                     </h5>
                     <small class="text-muted">
                         <i class="bi bi-info-circle"></i>
-                        Basierend auf zuletzt empfangener NODEINFO
+                        Basierend auf zuletzt empfangener NODEINFO als Broadcast auf dem Primärkanal
                     </small>
                 </div>
                 <div class="card-body">
@@ -105,6 +105,10 @@
                         Diese Nodes haben keinen Standard-Modem-Preset-Kanal als Primärkanal konfiguriert
                         (LongFast, ShortSlow, etc.), sondern einen eigenen Kanalnamen.
                         Das verhindert ggf. die korrekte Kommunikation im Mesh-Netzwerk.
+                        Die Konfiguration sollte aussehen wie auf meshhessen.de angegeben
+                        (<a href="https://meshhessen.de/wp-content/uploads/2026/01/Einrichtung_7_iOS.png" target="_blank" rel="noopener">iOS</a>
+                        / <a href="https://meshhessen.de/wp-content/uploads/2026/01/Einrichtung_12.png" target="_blank" rel="noopener">Android</a>).
+                        Weitere Kanäle können unterhalb von meshhessen als sekundäre Kanäle eingerichtet werden.
                     </p>
                     <div class="row g-2">
                         {% for entry in stats.misconfigured_by_channel %}
